@@ -1,0 +1,154 @@
+// Apps Script template para RSVP PWA
+// INSTRUÇÕES (resuma abaixo e cole este código em um novo Projeto de Apps Script):
+// 1) Crie um novo projeto em https://script.google.com
+// 2) Cole este código e salve
+// 3) Abra Arquivo -> Propriedades do Projeto (PropertiesService) e defina as propriedades listadas em CONFIGURAÇÃO (SHEET_ID_PRIV, VALID_TOKENS, ANON_SALT, etc)
+//    - SHEET_ID_PRIV: ID da planilha privada onde as respostas completas serão gravadas
+//    - SHEET_ID_PUB (opcional): ID da planilha pública para gravar versões anonimizadas
+//    - VALID_TOKENS: tokens válidos separados por vírgula (ex: ABC123,DEF456)
+//    - TOKEN_SINGLE_USE: true/false (opcional) — se true, cada token só pode ser usado uma vez
+//    - ANON_SALT: string secreta usada para gerar hash (não a publique)
+//    - CONFIG_<TOKEN>: (opcional) JSON string com config que será retornado por doGet quando ?t=<TOKEN>
+// 4) No Google Sheets crie as planilhas/abas conforme necessário (ex: 'respostas' na planilha privada, 'anon' na planilha pública)
+// 5) Deploy -> New deployment -> Web app
+//    - Execute as: Me (seu usuário)
+//    - Who has access: Anyone (ou Anyone with link) — o token protege o envio
+// 6) Copie a URL do Web App e cole em `ENDPOINT` no `index.html` do seu PWA
+
+// Código:
+function _getProps() {
+  return PropertiesService.getScriptProperties();
+}
+
+function _okJson(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function _hexDigest(bytes) {
+  return bytes.map(function(b){
+    var h = (b<0? b+256: b).toString(16);
+    return h.length==1? '0'+h : h;
+  }).join('');
+}
+
+// doGet: retorna config JSON para um token (se existir CONFIG_<TOKEN> nas Script Properties)
+function doGet(e) {
+  var token = (e.parameter && e.parameter.t) ? e.parameter.t : '';
+  if (!token) {
+    return _okJson({ ok: false, error: 'missing_token' });
+  }
+  var props = _getProps();
+  var cfgKey = 'CONFIG_' + token;
+  var cfg = props.getProperty(cfgKey);
+  if (cfg) {
+    try {
+      var obj = JSON.parse(cfg);
+      return _okJson({ ok: true, config: obj });
+    } catch (err) {
+      return _okJson({ ok: false, error: 'invalid_config' });
+    }
+  }
+  // se não há CONFIG_<TOKEN>, verifique se o token está na lista de tokens válidos
+  var valid = props.getProperty('VALID_TOKENS') || '';
+  var tokens = valid.split(',').map(function(t){ return t.trim(); }).filter(Boolean);
+  if (tokens.indexOf(token) === -1) {
+    return _okJson({ ok: false, error: 'token_invalid' });
+  }
+  // sem config explícita, retorne ok para indicar token válido
+  return _okJson({ ok: true, config: null });
+}
+
+// doPost: recebe submissões (JSON) com campos: nomes, vai, token, origem
+function doPost(e) {
+  try {
+    var data = {};
+    if (e.postData && e.postData.contents) {
+      data = JSON.parse(e.postData.contents);
+    } else {
+      // fallback: parâmetros form-urlencoded
+      data.nomes = e.parameter.nomes || '';
+      data.vai = e.parameter.vai || '';
+      data.token = e.parameter.token || '';
+      data.origem = e.parameter.origem || '';
+    }
+
+    var token = data.token || '';
+    var props = _getProps();
+    var valid = props.getProperty('VALID_TOKENS') || '';
+    var tokens = valid.split(',').map(function(t){ return t.trim(); }).filter(Boolean);
+    if (tokens.indexOf(token) === -1) {
+      return _okJson({ ok: false, error: 'token_invalid' });
+    }
+
+    // Se TOKEN_SINGLE_USE ativado, verifique se já foi usado
+    var singleUse = (props.getProperty('TOKEN_SINGLE_USE')+'').toLowerCase() === 'true';
+    if (singleUse) {
+      var usedSheetId = props.getProperty('SHEET_ID_TOKENS_USED');
+      if (!usedSheetId) {
+        // fallback para mesma planilha privada, aba 'tokens_used'
+        usedSheetId = props.getProperty('SHEET_ID_PRIV');
+      }
+      if (usedSheetId) {
+        var ssTokens = SpreadsheetApp.openById(usedSheetId);
+        var sht = ssTokens.getSheetByName('tokens_used');
+        if (!sht) sht = ssTokens.insertSheet('tokens_used');
+        var vals = sht.getDataRange().getValues().map(function(r){ return r[0]+''; });
+        if (vals.indexOf(token) !== -1) {
+          return _okJson({ ok: false, error: 'token_used' });
+        }
+        // marcar usado (apêndice)
+        sht.appendRow([token, new Date()]);
+      }
+    }
+
+    // gravar resposta na planilha privada
+    var sheetId = props.getProperty('SHEET_ID_PRIV');
+    if (!sheetId) {
+      return _okJson({ ok: false, error: 'no_sheet_config' });
+    }
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sheetName = props.getProperty('SHEET_NAME_PRIV') || 'respostas';
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) sheet = ss.insertSheet(sheetName);
+
+    var now = new Date();
+    sheet.appendRow([now, token, data.nomes || '', data.vai || '', data.origem || '']);
+
+    // opcional: gravar versão anônima em planilha pública
+    var pubId = props.getProperty('SHEET_ID_PUB');
+    if (pubId) {
+      var pubSS = SpreadsheetApp.openById(pubId);
+      var pubName = props.getProperty('SHEET_NAME_PUB') || 'anon';
+      var pubSheet = pubSS.getSheetByName(pubName);
+      if (!pubSheet) pubSheet = pubSS.insertSheet(pubName);
+
+      var salt = props.getProperty('ANON_SALT') || '';
+      var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, (data.nomes || '') + salt);
+      var hex = _hexDigest(digest);
+      pubSheet.appendRow([now, hex, data.vai || '']);
+    }
+
+    return _okJson({ ok: true });
+
+  } catch (err) {
+    return _okJson({ ok: false, error: 'exception', message: err.message });
+  }
+}
+
+/* UTILITÁRIOS/NOTAS
+- Para configurar Script Properties (recomendado): no editor do Apps Script vá em 'Project Settings' -> 'Script properties' -> 'Add property'
+- Exemplo de valores:
+  VALID_TOKENS = ABC123,DEF456
+  SHEET_ID_PRIV = 1aBcD... (ID da planilha privada)
+  SHEET_NAME_PRIV = respostas
+  SHEET_ID_PUB = (opcional) id da planilha pública
+  SHEET_NAME_PUB = anon
+  TOKEN_SINGLE_USE = true
+  ANON_SALT = alguma_string_secreta
+  CONFIG_ABC123 = {"title":"Evento – Nome & Outro","date":"11/10/2025","time":"17h00","venue":"Local do Evento","dtStart":"20251011T193000Z","dtEnd":"20251011T213000Z","mapUrl":"https://maps.google.com/"}
+
+- Deploy: Deploy -> New deployment -> Select type: Web app -> Configure
+  Execute as: Me
+  Who has access: Anyone
+- A URL do web app funcionará para receber POSTs e para GETs com ?t=TOKEN retornando config JSON.
+*/

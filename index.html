@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RSVP – Evento</title>
+  <meta name="description" content="Confirmação de presença do evento." />
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#5d4037" />
+  <link rel="icon" href="./icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Material+Symbols+Outlined" rel="stylesheet">
+</head>
+<body>
+  <header class="appbar">
+  <div class="appbar__title">Evento</div>
+    <button id="installBtn" class="btn btn--ghost" aria-label="Instalar app" hidden>
+      <span class="material-symbols-outlined">download</span>
+    </button>
+  </header>
+
+  <main class="container">
+    <section class="hero card">
+      <h1 class="hero__title" id="heroTitle">Evento</h1>
+      <p class="hero__meta" id="heroDate">Data · Hora</p>
+      <p class="hero__meta" id="heroVenue">Local</p>
+      <p><a id="heroMap" class="link" target="_blank" rel="noopener" href="#">Ver no mapa</a></p>
+    </section>
+
+    <section class="card">
+      <h2 class="section__title">Confirmação de Presença (RSVP)</h2>
+      <form id="rsvpForm" novalidate>
+        <!-- Campo de nome individual removido -->
+
+        <div class="field">
+          <label for="vai">Vai comparecer?<span class="req">*</span></label>
+            <div id="vaiRadios" role="radiogroup" aria-labelledby="vaiLabel">
+              <input type="radio" id="vaiSim" name="vai" value="Sim" required>
+              <label for="vaiSim">Sim, estarei presente</label><br>
+              <input type="radio" id="vaiNao" name="vai" value="Não">
+              <label for="vaiNao">Não poderei comparecer</label>
+            </div>
+          <small class="help" id="vaiHelp" hidden>Selecione uma opção.</small>
+        </div>
+
+        <div class="field">
+          <label for="nomes">Nome(s)<span class="req">*</span></label>
+          <textarea id="nomes" name="nomes" rows="2" required placeholder="Informe seu nome e do(s) acompanhante(s)"></textarea>
+          <small class="help" id="nomesHelp" hidden>Informe pelo menos um nome.</small>
+        </div>
+
+        <!-- Campos WhatsApp e Observações removidos para simplificar o formulário -->
+
+        <label class="checkbox">
+          <input type="checkbox" id="aceite" />
+          <span>Concordo em enviar meus dados para organização do evento.</span>
+        </label>
+
+        <div class="actions">
+          <button type="submit" class="btn btn--primary" id="enviarBtn">
+            <span class="material-symbols-outlined" aria-hidden="true">send</span>
+            Enviar confirmação
+          </button>
+          <button type="button" class="btn" id="addCalendarBtn">
+            <span class="material-symbols-outlined" aria-hidden="true">calendar_month</span>
+            Adicionar ao calendário
+          </button>
+        </div>
+  <p class="muted">Se preferir, responda pelo WhatsApp com “Vou/Não vou” seguido dos nomes (ex.: “Vou, João; Maria”).</p>
+      </form>
+    </section>
+
+    <section class="card" id="statusCard" hidden>
+      <p id="statusMsg" class="status"></p>
+    </section>
+  </main>
+
+    <footer class="footer">
+    <p>Evento · Data · Local</p>
+  </footer>
+
+  <script>
+  // ======= CONFIG – URL do seu Web App do Google Apps Script =======
+  const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxKJhc5lgfbciSOyA4y17NW5dWFaWf_iAjDM-qGHKcoASbQToxO634Zt2Dnt7-C-iJq/exec';
+    // ===========================================================================
+
+    // Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(console.error);
+      });
+    }
+
+    // Instalação (Add to Home Screen)
+    let deferredPrompt;
+    const installBtn = document.getElementById('installBtn');
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.hidden = false;
+    });
+    installBtn?.addEventListener('click', async () => {
+      installBtn.hidden = true;
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+    });
+
+    // Form logic + offline queue
+    const form = document.getElementById('rsvpForm');
+    const statusCard = document.getElementById('statusCard');
+    const statusMsg = document.getElementById('statusMsg');
+
+    function toast(msg, type = 'info') {
+      statusCard.hidden = false;
+      statusMsg.textContent = msg;
+      statusMsg.className = 'status ' + type;
+      setTimeout(() => { statusCard.hidden = true; }, 4500);
+    }
+
+    function gerarICS() {
+      const dtStart = window.appConfig?.dtStart || '20251011T193000Z'; // 16:30 BRT
+      const dtEnd   = window.appConfig?.dtEnd   || '20251011T213000Z'; // 18:30 BRT
+  const title = window.appConfig?.icsTitle || 'Evento – Nome & Outro';
+  const desc = window.appConfig?.icsDesc || 'Local do Evento';
+  const loc = window.appConfig?.icsLocation || 'Local do Evento';
+      const now = new Date();
+      const pad = (n)=> (n<10? '0'+n : ''+n);
+      const dtstamp = now.getUTCFullYear()+pad(now.getUTCMonth()+1)+pad(now.getUTCDate())+'T'+pad(now.getUTCHours())+pad(now.getUTCMinutes())+pad(now.getUTCSeconds())+'Z';
+      const escape = (s)=> String(s).replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
+      const ics = [
+        'BEGIN:VCALENDAR','VERSION:2.0','CALSCALE:GREGORIAN','PRODID:-//RSVP GA//PT-BR',
+        'BEGIN:VEVENT','DTSTAMP:'+dtstamp,'DTSTART:'+dtStart,'DTEND:'+dtEnd,
+        'SUMMARY:'+escape(title),'DESCRIPTION:'+escape(desc),'LOCATION:'+escape(loc),'END:VEVENT','END:VCALENDAR'
+      ].join('\r\n');
+      return new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    }
+
+    document.getElementById('addCalendarBtn')?.addEventListener('click', () => {
+      const blob = gerarICS();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+  a.href = url; a.download = 'evento.ics';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    function validate() {
+  const nomes = document.getElementById('nomes');
+  const vai = document.getElementById('vai');
+  const aceite = document.getElementById('aceite');
+  const nomesHelp = document.getElementById('nomesHelp');
+  const vaiHelp = document.getElementById('vaiHelp');
+
+  let ok = true;
+  if (!nomes.value.trim()) { nomesHelp.hidden = false; ok = false; }
+  else nomesHelp.hidden = true;
+  if (!vai.value) { vaiHelp.hidden = false; ok = false; }
+  else vaiHelp.hidden = true;
+  if (!aceite || !aceite.checked) { toast('Marque o consentimento para enviar.', 'warn'); ok = false; }
+  // exigir token na querystring (param t)
+  const token = params.get('t');
+  if (!token) { toast('Abra este link recebido por WhatsApp (link privado).', 'warn'); ok = false; }
+  return ok;
+    }
+
+    const QUEUE_KEY = 'rsvp_queue_v1';
+    function pushQueue(item) {
+      const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+      q.push(item); localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+    }
+    async function flushQueue() {
+      const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+      if (!q.length) return;
+      const rest = [];
+      for (const item of q) {
+        try {
+          const r = await fetch(ENDPOINT, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(item) });
+          const data = await r.json();
+          if (!(r.ok && data.ok)) throw new Error('Falha no envio');
+        } catch(e) {
+          rest.push(item);
+        }
+      }
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(rest));
+      if (q.length && !rest.length) toast('Fila offline enviada com sucesso.', 'success');
+    }
+
+    window.addEventListener('online', flushQueue);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!validate()) return;
+      const enviarBtn = document.getElementById('enviarBtn');
+      enviarBtn.disabled = true;
+
+      const payload = {
+        nomes: document.getElementById('nomes').value.trim(),
+        vai: document.getElementById('vai').value,
+        token: params.get('t') || '',
+        origem: navigator.userAgent
+      };
+
+      const send = async () => {
+        try {
+          const resp = await fetch(ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const data = await resp.json().catch(()=>({ok:false}));
+          if (resp.ok && data.ok) {
+            toast('Resposta registrada. Obrigado! 💛', 'success');
+            form.reset();
+          } else {
+            throw new Error();
+          }
+        } catch {
+          // offline ou erro: enfileira localmente
+          pushQueue(payload);
+          toast('Sem conexão? Guardamos sua resposta e enviaremos depois.', 'warn');
+        } finally {
+          enviarBtn.disabled = false;
+          flushQueue();
+        }
+      };
+      send();
+    });
+
+  // Pré-preencher nomes por querystring (?nomes=...) e carregar config por token (?t=...)
+  const params = new URLSearchParams(location.search);
+  const nomesQS = params.get('nomes');
+  const token = params.get('t');
+  if (nomesQS) document.getElementById('nomes').value = nomesQS;
+
+  // carregamento de configuração: primeiro default.json, depois override por token (./configs/<token>.json)
+  window.appConfig = {};
+  function applyConfig(cfg) {
+    if (!cfg) return;
+    window.appConfig = Object.assign({}, window.appConfig, cfg);
+    document.getElementById('heroTitle').textContent = window.appConfig.title || document.getElementById('heroTitle').textContent;
+    document.getElementById('heroDate').textContent = (window.appConfig.date || '') + (window.appConfig.time ? ' · ' + window.appConfig.time : '');
+    document.getElementById('heroVenue').textContent = window.appConfig.venue || document.getElementById('heroVenue').textContent;
+    document.getElementById('heroMap').href = window.appConfig.mapUrl || document.getElementById('heroMap').href;
+  }
+
+  // load strategy:
+  // 1) if token present, try ENDPOINT?t=token (Apps Script)
+  // 2) if that fails or no token, try ./configs/default.json
+  (async function(){
+    if (token) {
+      try {
+        const r = await fetch(ENDPOINT + '?t=' + encodeURIComponent(token));
+        const j = await r.json().catch(()=>null);
+        if (r.ok && j && j.ok && j.config) { applyConfig(j.config); return; }
+      } catch(e) {
+        // ignore and fallback
+      }
+      // try local file for token (developer convenience)
+      try {
+        const r2 = await fetch(`./configs/${token}.json`);
+        if (r2.ok) { const cfg = await r2.json(); applyConfig(cfg); return; }
+      } catch(e) {}
+    }
+    // final fallback: default.json
+    try {
+      const rd = await fetch('./configs/default.json');
+      if (rd.ok) { const cfgd = await rd.json(); applyConfig(cfgd); }
+    } catch(e) {}
+  })();
+  </script>
+</body>
+</html>

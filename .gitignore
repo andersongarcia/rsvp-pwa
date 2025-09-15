@@ -1,0 +1,7 @@
+# Node modules
+node_modules/
+
+# Configs sensíveis
+configs/
+*.secret
+config_for_apps_script_*.json
