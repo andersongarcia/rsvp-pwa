@@ -8,7 +8,6 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#5d4037" />
   <link rel="icon" href="./icons/favicon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="./icons/icon-192.png">
   <link rel="stylesheet" href="./styles.css" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Material+Symbols+Outlined" rel="stylesheet">
 </head>
@@ -52,10 +51,7 @@
 
         <!-- Campos WhatsApp e Observações removidos para simplificar o formulário -->
 
-        <label class="checkbox">
-          <input type="checkbox" id="aceite" />
-          <span>Concordo em enviar meus dados para organização do evento.</span>
-        </label>
+        <!-- consent checkbox removed to simplify the form -->
 
         <div class="actions">
           <button type="submit" class="btn btn--primary" id="enviarBtn">
@@ -149,17 +145,15 @@
 
     function validate() {
   const nomes = document.getElementById('nomes');
-  const vai = document.getElementById('vai');
-  const aceite = document.getElementById('aceite');
+  const vai = document.querySelector('input[name="vai"]:checked');
   const nomesHelp = document.getElementById('nomesHelp');
   const vaiHelp = document.getElementById('vaiHelp');
 
   let ok = true;
   if (!nomes.value.trim()) { nomesHelp.hidden = false; ok = false; }
   else nomesHelp.hidden = true;
-  if (!vai.value) { vaiHelp.hidden = false; ok = false; }
+  if (!vai) { vaiHelp.hidden = false; ok = false; }
   else vaiHelp.hidden = true;
-  if (!aceite || !aceite.checked) { toast('Marque o consentimento para enviar.', 'warn'); ok = false; }
   // exigir token na querystring (param t)
   const token = params.get('t');
   if (!token) { toast('Abra este link recebido por WhatsApp (link privado).', 'warn'); ok = false; }
@@ -198,7 +192,7 @@
 
       const payload = {
         nomes: document.getElementById('nomes').value.trim(),
-        vai: document.getElementById('vai').value,
+        vai: (document.querySelector('input[name="vai"]:checked') || {}).value || '',
         token: params.get('t') || '',
         origem: navigator.userAgent
       };
